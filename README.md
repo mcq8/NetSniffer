@@ -1,0 +1,1 @@
+Based on https://github.com/cocowalla/Snifter and https://code.msdn.microsoft.com/C-Sample-to-list-all-the-4817b58f
