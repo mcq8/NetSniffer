@@ -2,6 +2,7 @@
 using NetSniffer.Outputs.PcapNg;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -9,38 +10,69 @@ using System.Threading.Tasks;
 
 namespace NetSniffer
 {
+    public class ErrorEventArgs : EventArgs
+    {
+        public ErrorEventArgs(Exception error)
+        {
+            Error = error;
+        }
+        public Exception Error { get; set; }
+    }
+
     public class SocketSniffer : IDisposable
     {
         private readonly ConcurrentQueue<TimestampedData> outputQueue;
         private readonly ProgramFlowManager programFlowManager;
-        private readonly NetworkInterfaceInfo networkInterface;
+        private IOutput output;
 
         public CancellationTokenSource TokenSource { get; private set; }
-        public Exception Exception { get; private set; }
         public long PacketsObserved { get; private set; }
         public long PacketsCaptured { get; private set; }
 
-        public SocketSniffer(ProgramFlowManager programFlowManager, NetworkInterfaceInfo networkInterface)
+        public delegate void ErrorEventHandler(object sender, ErrorEventArgs args);
+        public event ErrorEventHandler Error;
+
+        public SocketSniffer(ProgramFlowManager programFlowManager)
         {
             this.programFlowManager = programFlowManager;
-            this.networkInterface = networkInterface;
             
             outputQueue = new ConcurrentQueue<TimestampedData>();
             TokenSource = new CancellationTokenSource();
+        }
 
-            Task<Exception>[] tasks = new Task<Exception>[]
+        public void init(IList<NetworkInterfaceInfo> networkInterfaces)
+        {
+            Task<Exception>[] tasks = new Task<Exception>[networkInterfaces.Count + 1];
+
+            tasks[0] = Task<Exception>.Factory.StartNew(Outputting);
+
+            int i = 1;
+            foreach (NetworkInterfaceInfo networkInterfaceInfo in networkInterfaces)
             {
-                Task<Exception>.Factory.StartNew(Outputting),
-                Task<Exception>.Factory.StartNew(Receiving)
-            };
+                tasks[i++] = Task<Exception>.Factory.StartNew(() => Receiving(networkInterfaceInfo));
+            }
+
             Task.Factory.ContinueWhenAny(tasks, exception =>
             {
                 if (exception.Result != null)
                 {
                     TokenSource.Cancel();
-                    Exception = exception.Result;
+                    this.Error?.Invoke(this, new ErrorEventArgs(exception.Result));
                 }
             });
+        }
+
+        public void startCapture()
+        {
+            output = new PcapNgFileOutput("capture" + DateTime.Now.ToString("yyyy_MM_dd_HH_mm") + ".pcap");
+            PacketsCaptured = 0;
+            PacketsObserved = 0;
+        }
+
+        public void stopCapture()
+        {
+            output.Dispose();
+            output = null;
         }
 
         private bool ShouldOutput(TimestampedData timestampedData)
@@ -51,7 +83,7 @@ namespace NetSniffer
                 int ipHeaderLength = timestampedData.Data[0] & 0x0F;
                 var sourceEndPoint = new IPEndPoint(BitConverter.ToUInt32(timestampedData.Data, 12), timestampedData.Data[ipHeaderLength * 4] * 256 + timestampedData.Data[ipHeaderLength * 4 + 1]);
                 var destEndPoint = new IPEndPoint(BitConverter.ToUInt32(timestampedData.Data, 16), timestampedData.Data[ipHeaderLength * 4 + 2] * 256 + timestampedData.Data[ipHeaderLength * 4 + 3]);
-                int port = networkInterface.IPAddress.Equals(sourceEndPoint.Address) ? sourceEndPoint.Port : destEndPoint.Port;
+                int port = timestampedData.NetworkInterface.IPAddress.Equals(sourceEndPoint.Address) ? sourceEndPoint.Port : destEndPoint.Port;
 
                 programFlowManager.portLookup.TryGetValue(new Tuple<ProtocolType, int>(protocol, port), out ProgramFlows program);
                 if (program == null)
@@ -66,10 +98,10 @@ namespace NetSniffer
 
                 if (protocol == ProtocolType.Udp)
                 {
-                    program.TcpTableRecords.TryGetValue(new Tuple<ProtocolType, int>(protocol, port), out Flow flow);
+                    program.NetworkTableRecords.TryGetValue(new Tuple<ProtocolType, int>(protocol, port), out Flow flow);
                     if (flow != null)
                     {
-                        flow.RemoteEndpoint = (networkInterface.IPAddress.Equals(sourceEndPoint.Address)) ? destEndPoint : sourceEndPoint;
+                        flow.RemoteEndpoint = (timestampedData.NetworkInterface.IPAddress.Equals(sourceEndPoint.Address)) ? destEndPoint : sourceEndPoint;
                     }
                 }
                 timestampedData.ProgramFlows = program;
@@ -82,7 +114,7 @@ namespace NetSniffer
             return false;
         }
 
-        private Exception Receiving()
+        private Exception Receiving(NetworkInterfaceInfo networkInterface)
         {
             Socket socket = null;
             try
@@ -98,7 +130,7 @@ namespace NetSniffer
                     int ret = socket.Receive(bufferRaw);
                     var buffer = new byte[ret];
                     Buffer.BlockCopy(bufferRaw, 0, buffer, 0, ret);
-                    outputQueue.Enqueue(new TimestampedData(DateTime.UtcNow, buffer));
+                    outputQueue.Enqueue(new TimestampedData(DateTime.UtcNow, buffer, networkInterface));
                     this.PacketsObserved++;
                 }
             }
@@ -108,30 +140,25 @@ namespace NetSniffer
             }
             finally
             {
-                if (socket != null)
-                {
-                    socket.Close();
-                }
+                socket?.Close();
             }
             return null;
         }
 
         private Exception Outputting()
         {
-            IOutput output = null;
             try
             {
-                output = new PcapNgFileOutput(networkInterface, "capture" + DateTime.Now.ToString("yyyy_MM_dd_HH_mm") + ".pcap");
-
                 TimestampedData timestampedData;
                 while (!TokenSource.IsCancellationRequested)
                 {
                     while (outputQueue.TryDequeue(out timestampedData))
                     {
-                        if (ShouldOutput(timestampedData))
+                        var output = this.output;
+                        if (ShouldOutput(timestampedData) && output != null)
                         {
                             output.Output(timestampedData);
-                            this.PacketsCaptured++;
+                            PacketsCaptured++;
                         }
                     }
                     Thread.Sleep(100);
@@ -144,15 +171,11 @@ namespace NetSniffer
             }
             finally
             {
-                if (output != null)
-                {
-                    output.Dispose();
-                }
+                output?.Dispose();
             }
 
             return null;
         }
-
 
         public void Dispose()
         {

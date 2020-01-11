@@ -20,8 +20,17 @@ namespace NetSniffer
 
             listBox1.DrawItem += ListBox1_DrawItem;
             listBox1.DataSource = Iphlpapi.programFlowsList;
+            var networkInterfaces = NetworkInterfaceInfo.GetInterfaces();
+            comboBox1.DataSource = networkInterfaces;
+            sn = new SocketSniffer(Iphlpapi);
+            sn.Error += Sn_Error;
+            sn.init(networkInterfaces);
 
-            comboBox1.DataSource = NetworkInterfaceInfo.GetInterfaces();
+        }
+
+        private void Sn_Error(object sender, ErrorEventArgs e)
+        {
+            this.Invoke((MethodInvoker)(() => { MessageBox.Show(e.Error.Message); Close(); }));
         }
 
         private void ListBox1_DrawItem(object sender, DrawItemEventArgs e)
@@ -42,7 +51,7 @@ namespace NetSniffer
 
         private void listBox1_SelectedIndexChanged(object sender, EventArgs e)
         {
-            dataGridView1.DataSource = ((ProgramFlows)((ListBox)sender).SelectedItem).TcpTableRecords.Values.ToList<Flow>();
+            dataGridView1.DataSource = ((ProgramFlows)((ListBox)sender).SelectedItem).NetworkTableRecords.Values.ToList<Flow>();
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -58,39 +67,27 @@ namespace NetSniffer
         private void button2_Click(object sender, EventArgs e)
         {
             button2.Enabled = false;
-            if (sn == null)
+            button3.Enabled = true;
+            sn.startCapture();
+            tokenSource = new CancellationTokenSource();
+            CancellationToken ct = tokenSource.Token;
+            Task.Factory.StartNew(() =>
             {
-                sn = new SocketSniffer(Iphlpapi, (NetworkInterfaceInfo)comboBox1.SelectedItem);
-                button3.Enabled = true;
-                tokenSource = new CancellationTokenSource();
-                CancellationToken ct = tokenSource.Token;
-                Task.Factory.StartNew(() =>
+                while (!ct.IsCancellationRequested)
                 {
-                    while (!ct.IsCancellationRequested)
-                    {
-                        this.Invoke((MethodInvoker)(() => label1.Text = "Observed: " + sn.PacketsObserved));
-                        this.Invoke((MethodInvoker)(() => label2.Text = "Captured: " + sn.PacketsCaptured));
-                        if (sn.TokenSource.IsCancellationRequested)
-                        {
-                            MessageBox.Show(sn.Exception.Message);
-                            this.Invoke(new MethodInvoker(() => button3_Click(sender, e)));
-                        }
-                        Thread.Sleep(1000);
-                    }
-                });
-            }
+                    this.Invoke((MethodInvoker)(() => label1.Text = "Observed: " + sn.PacketsObserved));
+                    this.Invoke((MethodInvoker)(() => label2.Text = "Captured: " + sn.PacketsCaptured));
+                    Thread.Sleep(1000);
+                }
+            });
         }
 
         private void button3_Click(object sender, EventArgs e)
         {
             button3.Enabled = false;
-            if (sn != null)
-            {
-                tokenSource.Cancel();
-                tokenSource = null;
-                sn.Dispose();
-                sn = null;
-            }
+            sn.stopCapture();
+            tokenSource.Cancel();
+            tokenSource = null;
             button2.Enabled = true;
         }
     }

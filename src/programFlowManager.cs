@@ -62,13 +62,12 @@ namespace NetSniffer
                     programFlowsList.Add(program);
                 }
                 Tuple<ProtocolType, int> protocolport = new Tuple<ProtocolType, int>(flow.Type, flow.LocalEndpoint.Port);
-                if (!program.TcpTableRecords.ContainsKey(protocolport))
+                if (!program.NetworkTableRecords.ContainsKey(protocolport))
                 {
-                    program.TcpTableRecords.Add(protocolport, flow);
+                    program.NetworkTableRecords.Add(protocolport, flow);
                     try
                     {
                         portLookup.Add(protocolport, program);
-
                     }
                     catch (Exception)
                     {

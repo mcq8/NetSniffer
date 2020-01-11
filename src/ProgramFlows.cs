@@ -8,7 +8,7 @@ namespace NetSniffer
     {
         public bool Capture { get; set; }
         public string ProcessName { get; set; }
-        public Dictionary<Tuple<ProtocolType, int>, Flow> TcpTableRecords { get; } = new Dictionary<Tuple<ProtocolType, int>, Flow>();
+        public Dictionary<Tuple<ProtocolType, int>, Flow> NetworkTableRecords { get; } = new Dictionary<Tuple<ProtocolType, int>, Flow>();
 
         public ProgramFlows(string processName)
         {

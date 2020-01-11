@@ -8,11 +8,13 @@ namespace NetSniffer
         public byte[] Data { get; }
         public ProgramFlows ProgramFlows { get; set; }
 
-        public TimestampedData(DateTime timestamp, byte[] data)
-        {
-            this.Timestamp = timestamp;
-            this.Data = data;
+        public NetworkInterfaceInfo NetworkInterface { get; }
 
+        public TimestampedData(DateTime timestamp, byte[] data, NetworkInterfaceInfo networkInterface)
+        {
+            Timestamp = timestamp;
+            Data = data;
+            NetworkInterface = networkInterface;
         }
     }
 }

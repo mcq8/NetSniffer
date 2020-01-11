@@ -16,13 +16,12 @@ namespace NetSniffer
         public static IList<NetworkInterfaceInfo> GetInterfaces()
         {
             var nicInfos = new List<NetworkInterfaceInfo>();
-            var nics = NetworkInterface.GetAllNetworkInterfaces();
+            var nics = NetworkInterface.GetAllNetworkInterfaces().Where(nic => nic.OperationalStatus == OperationalStatus.Up && nic.NetworkInterfaceType != NetworkInterfaceType.Loopback);
 
             foreach (var nic in nics)
             {
                 var ipAddresses = nic.GetIPProperties().UnicastAddresses.Where(x =>
                     x.Address != null && x.Address.AddressFamily == AddressFamily.InterNetwork);
-
                 foreach (var ipAddress in ipAddresses)
                 {
                     var nicInfo = new NetworkInterfaceInfo
